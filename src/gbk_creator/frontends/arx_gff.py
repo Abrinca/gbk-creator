@@ -30,7 +30,7 @@ from ..builder import GENE_FEATURE_TYPES, UNTAGGED_FEATURE_TYPES, GenBankBuilder
 from ..errors import GbkCreatorError
 
 _IGNORED_ATTRIBUTES = {"ID", "Name", "Parent", "locus_tag", "product", "gene", "pseudo", "codon_start",
-                       "EC_number", "Ontology_term", "translation"}
+                       "EC_number", "Ontology_term", "translation", "old_locus_tag"}
 MAX_SLIPPAGE_GAP = 10
 _SKIPPED_TYPES = {"remark", "source", "gene"}  # `gene` parents are created by the builder
 
@@ -325,13 +325,16 @@ def build_from_arx_gff(
                 product=row.first("product"), gene=row.first("gene"), pseudo="pseudo" in row.attrs,
                 translation=_translation(lt, row, proteins),
                 codon_start=int(row.first("codon_start")) if "codon_start" in row.attrs else None,
+                old_locus_tag=row.first("old_locus_tag"),
                 **extra)
             for ec in row.attrs.get("EC_number", []):
                 sidecar.append((lt, "EC", f"EC:{ec}"))
             for go in row.attrs.get("Ontology_term", []):
                 sidecar.append((lt, "GO", go))
         elif row.type in UNTAGGED_FEATURE_TYPES:
-            b.add_feature(row.seqid, row.type, loc, **extra)
+            # only ID/Name/Parent are structural; anything else (product, EC_number, ...) must be accepted by the builder
+            untagged = {k: v for k, v in row.attrs.items() if k not in ("ID", "Name", "Parent")}
+            b.add_feature(row.seqid, row.type, loc, **untagged)
         else:
             raise FrontendError(f"GFF line {row.line_no}: unsupported feature type {row.type!r}.")
 

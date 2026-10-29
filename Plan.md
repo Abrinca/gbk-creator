@@ -38,7 +38,11 @@ b.add_contig(name="FAM13496-i1-1.1_scf1",   # user supplies the name (re-use exi
 b.add_gene(locus_tag="FAM13496-i1-1.1_000001", contig=..., location=...,   # Biopython-style, strand ±1,
            feature_type="CDS"|"tRNA"|"rRNA"|"ncRNA"|"tmRNA",               # join() and </> partial ends allowed
            product=..., gene=None, pseudo=False, translation=None,
-           codon_start=1, **extra_qualifiers)   # only qualifiers that occur in the PGAP oracle
+           codon_start=1,
+           old_locus_tag=None,   # previous locus tag: /old_locus_tag on gene AND child (last qualifier, like arx-tools'
+                                 # rename mode; Arx reads the first one per locus); non-empty line, no ", max 100 chars,
+                                 # unique, != locus_tag
+           **extra_qualifiers)   # only qualifiers that occur in the PGAP oracle
            # -> builder auto-creates the `gene` parent feature (same location, locus_tag, /pseudo if pseudo)
 b.add_feature(contig=..., feature_type="repeat_region"|"regulatory", location=..., **qualifiers)  # no locus_tag
 b.add_annotation(locus_tag, anno_type="KG", anno_id="K00001")

@@ -255,3 +255,49 @@ def test_our_cds_tool_wins_the_merge_with_arx_tools_detection(tmp_path, monkeypa
     genome = _import_genome_json(out, tmp_path, "x")
     assert genome["cds_tool"].startswith("Abrinca GenBankBuilder v")
     assert genome["cds_tool_version"] == "9" and genome["cds_tool_date"] == "2020-01-01"  # not ours: untouched
+
+
+# ----------------------------------------------------------------------------- old_locus_tag
+def test_old_locus_tag_survives_import_and_generated_files(tmp_path):
+    from Bio.SeqFeature import SimpleLocation
+    from conftest import BUILD_DATE, TAXON, random_dna
+    from gbk_creator import GenBankBuilder
+
+    b = GenBankBuilder("NEW-1.1", 1308, strain="NEW", taxon=TAXON, build_date=BUILD_DATE)
+    b.add_contig("NEW-1.1_scf1", random_dna(600))
+    old = {1: "old_gene_A", 2: "LEGACY 0002", 3: "x" * 100}
+    b.add_gene("NEW-1.1_000001", "NEW-1.1_scf1", SimpleLocation(0, 90, 1), "CDS", product="p1", translation="M" * 30,
+               old_locus_tag=old[1])
+    b.add_gene("NEW-1.1_000002", "NEW-1.1_scf1", SimpleLocation(100, 190, -1), "CDS", product="p2", pseudo=True,
+               old_locus_tag=old[2])
+    b.add_gene("NEW-1.1_000003", "NEW-1.1_scf1", SimpleLocation(200, 276, 1), "tRNA", product="tRNA-Gly",
+               old_locus_tag=old[3])
+    b.add_gene("NEW-1.1_000004", "NEW-1.1_scf1", SimpleLocation(300, 390, 1), "CDS", product="p4", translation="M" * 30)
+    out = tmp_path / "gen"
+    b.write(out)
+
+    folder = tmp_path / "fs"
+    (folder / "organisms").mkdir(parents=True)
+    (folder / "version.json").write_text(json.dumps({"folder_structure_version": 3}))
+    import_genome(import_dir=str(out), folder_structure_dir=str(folder), organism="NEW", genome="NEW-1.1")
+    genome_dir = folder / "organisms" / "NEW" / "genomes" / "NEW-1.1"
+
+    # the gbk is untouched and parses: both features of every locus carry the first /old_locus_tag Arx reads
+    assert (genome_dir / "NEW-1.1.gbk").read_text() == (out / "NEW-1.1.gbk").read_text()
+    rec = next(SeqIO.parse(genome_dir / "NEW-1.1.gbk", "genbank"))
+    seen = {}
+    for f in rec.features:
+        if "locus_tag" in f.qualifiers:
+            seen.setdefault(f.qualifiers["locus_tag"][0], []).append(f.qualifiers.get("old_locus_tag"))
+    assert seen == {"NEW-1.1_000001": [[old[1]]] * 2, "NEW-1.1_000002": [[old[2]]] * 2,
+                    "NEW-1.1_000003": [[old[3]]] * 2, "NEW-1.1_000004": [None] * 2}
+    # arx-tools' generated faa/ffn (strict) are unaffected and keyed by the new locus tags
+    assert set(fasta(genome_dir / "NEW-1.1.faa")) == {"NEW-1.1_000001", "NEW-1.1_000004"}
+    assert set(fasta(genome_dir / "NEW-1.1.ffn")) == {f"NEW-1.1_00000{n}" for n in (1, 2, 3, 4)}
+    assert not any(o in (genome_dir / "NEW-1.1.faa").read_text() for o in old.values())
+    # the gff derived from the gbk carries it too
+    gff = (genome_dir / "NEW-1.1.arx.gff").read_text()
+    assert "old_locus_tag=old_gene_A" in gff and "old_locus_tag=LEGACY 0002" in gff
+    # Arx reads the first /old_locus_tag of a locus: the `gene` feature comes first and has it
+    gbk = GenBankFile(str(genome_dir / "NEW-1.1.gbk"))
+    gbk.validate_locus_tags(locus_tag_prefix="NEW-1.1_")

@@ -321,7 +321,7 @@ class TestQualifiers:
         with pytest.raises(FeatureError, match="pseudo=True argument of add_gene"):
             builder.add_feature(f"{ID}_scf1", "misc_feature", loc(0, 30), note="x", pseudo=True)
 
-    @pytest.mark.parametrize("key", ["old_locus_tag", "experiment", "function", "EC_number", "colour"])
+    @pytest.mark.parametrize("key", ["experiment", "function", "EC_number", "colour"])
     def test_only_oracle_qualifiers(self, builder, key):
         with pytest.raises(FeatureError, match="not allowed"):
             cds(builder, 1, 0, 30, **{key: "x"})
@@ -477,3 +477,54 @@ class TestWrite:
         b.add_gene(f"{identifier}_000001", f"{identifier}_scf1", loc(0, 30), "CDS", product="p", translation="M")
         with pytest.raises(GbkCreatorError, match="classify"):
             b.write(tmp_path)
+
+
+# ----------------------------------------------------------------------------- old_locus_tag
+class TestOldLocusTag:
+    def test_written_to_gene_and_child_as_last_qualifier(self, builder, tmp_path):
+        from Bio import SeqIO
+        cds(builder, 1, 0, 30, gene="cas9", old_locus_tag="OLD_0001")
+        cds(builder, 2, 40, 70, pseudo=True, translation=None, old_locus_tag="OLD 0002/x")
+        trna(builder, 3, 100, 130, old_locus_tag="OLD_0003")
+        cds(builder, 4, 200, 230)
+        builder.write(tmp_path)
+        feats = next(SeqIO.parse(tmp_path / f"{ID}.gbk", "genbank")).features
+        by = {(f.type, f.qualifiers.get("locus_tag", [None])[0]): f for f in feats}
+        for n, old, ctype in ((1, "OLD_0001", "CDS"), (2, "OLD 0002/x", "CDS"), (3, "OLD_0003", "tRNA")):
+            for ftype in ("gene", ctype):
+                q = by[ftype, tag(n)].qualifiers
+                assert q["old_locus_tag"] == [old]
+                assert list(q)[-1] == "old_locus_tag"  # after /translation too, like arx-tools' rename mode
+        assert "old_locus_tag" not in by["gene", tag(4)].qualifiers and "old_locus_tag" not in by["CDS", tag(4)].qualifiers
+        assert list(by["CDS", tag(1)].qualifiers)[-2:] == ["translation", "old_locus_tag"]
+
+    @pytest.mark.parametrize("bad", ["", " ", " x", "x ", 'a"b', "a\nb", "a\tb", "x" * 101, 5, ["x"], b"x"])
+    def test_validation(self, builder, bad):
+        with pytest.raises(NamingError, match="old_locus_tag"):
+            cds(builder, 1, 0, 30, old_locus_tag=bad)
+        assert tag(1) not in builder._genes  # nothing half-added
+
+    def test_max_length_100(self, builder):
+        cds(builder, 1, 0, 30, old_locus_tag="o" * 100)
+
+    def test_must_differ_from_new_locus_tag(self, builder):
+        with pytest.raises(NamingError, match="must differ"):
+            cds(builder, 1, 0, 30, old_locus_tag=tag(1))
+
+    def test_unique_across_the_genome(self, builder):
+        cds(builder, 1, 0, 30, old_locus_tag="OLD_1")
+        with pytest.raises(NamingError, match=rf"already used by {tag(1)}"):
+            cds(builder, 2, 40, 70, old_locus_tag="OLD_1", contig=f"{ID}_scf2")
+        assert tag(2) not in builder._genes
+        cds(builder, 2, 40, 70, old_locus_tag="OLD_2")
+
+    def test_failed_add_does_not_reserve_the_old_tag(self, builder):
+        with pytest.raises(FeatureError):
+            cds(builder, 1, 0, 30, old_locus_tag="OLD_1", translation=None)  # non-pseudo CDS without translation
+        cds(builder, 1, 0, 30, old_locus_tag="OLD_1")
+
+    def test_extra_qualifier_hints_to_the_argument(self, builder):
+        with pytest.raises(FeatureError, match="old_locus_tag argument of add_gene"):
+            builder.add_feature(f"{ID}_scf1", "misc_feature", loc(0, 30), note="x", old_locus_tag="OLD")
+        with pytest.raises(FeatureError, match="old_locus_tag argument of add_gene"):
+            builder._normalize_qualifiers("CDS", {"old_locus_tag": ["x"]}, set(), "x")

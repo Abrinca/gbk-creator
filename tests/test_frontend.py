@@ -300,3 +300,18 @@ def test_cli_reports_errors_without_traceback(files, tmp_path, monkeypatch, caps
     assert rc_ == 1
     assert "must start with the strain" in capsys.readouterr().err
     assert not (tmp_path / "o").exists()
+
+
+def test_old_locus_tag_attribute_is_passed_on_and_rejected_on_untagged_features(files):
+    gff = files / "a.arx.gff"
+    original = gff.read_text()
+    gff.write_text(original.replace("locus_tag=%s_000004;product=q" % ID, "locus_tag=%s_000004;old_locus_tag=OLD4;product=q" % ID))
+    b = build(files)
+    assert b._genes[f"{ID}_000004"].child_qualifiers["old_locus_tag"] == ["OLD4"]
+    assert b._genes[f"{ID}_000004"].gene_qualifiers["old_locus_tag"] == ["OLD4"]
+    gff.write_text(original.replace("ID=x;rpt_family", "ID=x;old_locus_tag=OLD;rpt_family"))
+    with pytest.raises(GbkCreatorError, match="old_locus_tag argument of add_gene"):
+        build(files)
+    gff.write_text(original.replace("ID=x;rpt_family", "ID=x;product=oops;rpt_family"))
+    with pytest.raises(GbkCreatorError, match="product"):  # no silent ignoring on untagged features
+        build(files)

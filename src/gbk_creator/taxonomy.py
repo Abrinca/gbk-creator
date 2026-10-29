@@ -189,8 +189,12 @@ class NcbiClient:
                          tuple(cached["lineage"]))
         raw = self._http_post("efetch.fcgi", {"db": "taxonomy", "id": str(taxid), "retmode": "xml"})
         taxon = parse_taxon_xml(raw, taxid)
-        self._cache_put("taxid", str(taxid), asdict(taxon) | {"lineage": list(taxon.lineage)})
+        self.cache_taxon(taxon)
         return taxon
+
+    def cache_taxon(self, taxon: Taxon) -> None:
+        """Store a taxon in the disk cache, exactly as :meth:`fetch_taxon` does after a lookup."""
+        self._cache_put("taxid", str(taxon.taxid), asdict(taxon) | {"lineage": list(taxon.lineage)})
 
 
 def parse_taxon_xml(raw: bytes | str, requested_taxid: int) -> Taxon:

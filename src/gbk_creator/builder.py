@@ -16,6 +16,7 @@ from .taxonomy import NcbiClient, Taxon
 
 MAX_IDENTIFIER_LENGTH = 50
 MAX_STRAIN_LENGTH = 40
+MAX_OLD_LOCUS_TAG_LENGTH = 100  # Arx Gene.old_locus_tag CharField(max_length=100)
 # Whitespace, ':' '/' '\' as per Plan; '|' because Arx/arx-tools split locus tags on it.
 _FORBIDDEN_IDENTIFIER_CHARS = set(' \t\r\n:/\\|')
 
@@ -46,6 +47,7 @@ _FORBIDDEN_QUALIFIER_HINTS = {
     "EC_number": "EC numbers must not be written to the gbk; use add_annotation(locus_tag, 'EC', 'EC:1.2.3.4')",
     "pseudo": "use the pseudo=True argument of add_gene",
     "locus_tag": "locus tags are set via the locus_tag argument of add_gene (untagged features have none)",
+    "old_locus_tag": "use the old_locus_tag argument of add_gene (untagged features have no locus tag)",
     "product": "use the product argument",
     "gene": "use the gene argument",
     "translation": "use the translation argument",
@@ -133,6 +135,7 @@ class GenBankBuilder:
         self._contigs: list[Contig] = []
         self._contigs_by_name: dict[str, Contig] = {}
         self._genes: dict[str, Gene] = {}
+        self._old_locus_tags: dict[str, str] = {}  # old locus tag -> new locus tag
         self._features: list[UntaggedFeature] = []
         self._annotations: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
         self._order = 0
@@ -327,10 +330,14 @@ class GenBankBuilder:
         pseudo: bool = False,
         translation: str | None = None,
         codon_start: int | None = None,
+        old_locus_tag: str | None = None,
         **extra_qualifiers,
     ) -> None:
         """Add a locus-tagged gene. The `gene` parent feature is created automatically (same location,
         except for joins that do not wrap around the contig origin: there it spans all parts, as in PGAP).
+
+        ``old_locus_tag`` (your previous locus tag; non-empty single line, no ``"``, no surrounding whitespace,
+        max 100 chars, unique, different from ``locus_tag``) is written to both the gene and the child feature.
 
         ``extra_qualifiers`` may hold only qualifiers that occur in the PGAP oracle (see
         ``ALLOWED_GENE_QUALIFIERS``); valueless flags such as ribosomal_slippage take ``True``.
@@ -353,6 +360,7 @@ class GenBankBuilder:
                 raise FeatureError(
                     f"{what}: /gene {gene!r} does not match the GC regex {self._gc_regex.pattern!r} "
                     "(3-11 characters of [0-9a-zA-Z_/-' ]).")
+        self._check_old_locus_tag(old_locus_tag, locus_tag, what)
         is_cds = feature_type == "CDS"
         if not isinstance(pseudo, bool):
             raise FeatureError(f"{what}: pseudo must be True or False, got {pseudo!r}.")
@@ -390,6 +398,11 @@ class GenBankBuilder:
             gene_q["pseudo"] = [None]
 
         child_q = _order_child_qualifiers(feature_type, gene, locus_tag, product, pseudo, translation, q)
+        if old_locus_tag is not None:
+            # like arx-tools' rename mode: appended as the last qualifier of the gene and of its child feature
+            gene_q["old_locus_tag"] = [old_locus_tag]
+            child_q["old_locus_tag"] = [old_locus_tag]
+            self._old_locus_tags[old_locus_tag] = locus_tag
         gene_location = location
         starts = [int(p.start) for p in location.parts]
         in_order = starts == sorted(starts, reverse=location.strand == -1)
@@ -404,6 +417,25 @@ class GenBankBuilder:
             gene_location=gene_location,
             feature_type=feature_type, pseudo=pseudo, gene_qualifiers=gene_q,
             child_qualifiers=child_q, order=self._next_order())
+
+    def _check_old_locus_tag(self, old, locus_tag, what):
+        if old is None:
+            return
+        if not isinstance(old, str) or not old or _has_control_chars(old):
+            raise NamingError(f"{what}: old_locus_tag must be None or a non-empty single-line string, got {old!r}.")
+        if old != old.strip():
+            raise NamingError(f"{what}: old_locus_tag {old!r} must not have leading or trailing whitespace.")
+        if '"' in old:
+            raise NamingError(f"{what}: old_locus_tag {old!r} must not contain a double quote.")
+        if len(old) > MAX_OLD_LOCUS_TAG_LENGTH:
+            raise NamingError(
+                f"{what}: old_locus_tag is {len(old)} characters long; max {MAX_OLD_LOCUS_TAG_LENGTH} (Arx limit).")
+        if old == locus_tag:
+            raise NamingError(f"{what}: old_locus_tag must differ from the new locus tag.")
+        if old in self._old_locus_tags:
+            raise NamingError(
+                f"{what}: old_locus_tag {old!r} is already used by {self._old_locus_tags[old]}; "
+                "old locus tags must be unique.")
 
     def add_feature(self, contig: str, feature_type: str, location: Location, **qualifiers) -> None:
         """Add a feature without locus tag (``repeat_region``, ``regulatory``, ``misc_feature``)."""
