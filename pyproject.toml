@@ -1,0 +1,37 @@
+[project]
+name = "gbk-creator"
+version = "0.1.0"
+description = "Build PGAP-canonical GenBank files and custom-annotation sidecars that import into Arx"
+readme = "README.md"
+authors = [
+    { name = "Thomas Roder", email = "roder.thomas@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "biopython>=1.88",
+]
+
+[project.scripts]
+gbk-creator = "gbk_creator:main"
+
+[build-system]
+requires = ["uv_build>=0.12.24,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+markers = [
+    "transport: exercises NcbiClient._http_post with a mocked urlopen (offline)",
+    "network: talks to NCBI E-utilities (needs NCBI_EMAIL; deselect with -m 'not network')",
+]
+filterwarnings = ["ignore::SyntaxWarning"]
+
+[dependency-groups]
+dev = [
+    "arx-tools",
+    "pytest>=9.2.0",
+]
+
+[tool.uv.sources]
+arx-tools = { git = "https://github.com/Abrinca/arx-tools.git" }
